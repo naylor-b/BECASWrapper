@@ -178,7 +178,8 @@ def becas_configure_stiffness_calc(kls):
     cls.connect('cs2d', 'cid.case_inputs.a2b.cs2d')
     # declare outputs
     cls.cid.add_response('a2b.te_ratio')
-    cls.create_passthrough('cid.case_outputs.a2b.te_ratio')
+    cls.cid.add_response('a2b.thickness_ratio')
+    cls.create_passthrough('cid.case_outputs.a2b.thickness_ratio')
 
     # add becas
     cls.add('becas', BECASWrapper())
