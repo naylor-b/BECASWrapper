@@ -42,6 +42,7 @@ class CS2DtoBECAS(Component):
     nodes_3d = Array(iotype='out', desc='')
     el_3d = Array(iotype='out', desc='')
     te_ratio = Float(iotype='out', desc='ratio between outer TE planform and TE layup thickness')
+    thickness_ratio = Array(iotype='out', desc='ratio between outer planform and layup thickness at the DPs')
 
     def execute(self):
         """  """
@@ -68,6 +69,7 @@ class CS2DtoBECAS(Component):
             # self.flatback()
             # self.adjust_te_panels()
             self.output_te_ratio()
+            self.compute_thickness_to_airfoil_ratio()
             self.add_shearweb_nodes()
             self.create_elements()
             self.create_elements_3d(reverse_normals=False)
@@ -412,6 +414,32 @@ class CS2DtoBECAS(Component):
         thick_max = (r_TE_pres.thickness + r_TE_suc.thickness) / 2.
         self.te_ratio = thick_max / dTE
         self._logger.info('TE ratio %f %f %f' % (self.cs2d.s, dTE * 3., self.te_ratio))
+
+    def compute_thickness_to_airfoil_ratio(self):
+        """
+        compute the ratio between the material thickness and the airfoil 
+        thickness at the different DPs
+        """        
+        # extract number of dominant region from name REGION##
+        nr_cap = int(self.dominant_elsets[0][6:])
+        self.thickness_ratio = np.zeros(nr_cap+1)
+        # loop DP points up to the cap from the trailing edge
+        for i in range(nr_cap+1):
+            # pick DP points that now instead are called CPs
+            x1, y1 = self.CPs[i]
+            x2, y2 = self.CPs[-(i+1)]
+            # compute shape thickness
+            shape_thickness = ((x1 - x2)**2 + (y1 - y2)**2)**.5
+            
+            r_name1 = self.cs2d.regions[i]
+            r_1_suc = getattr(self.cs2d, r_name1)
+            r_name2 = self.cs2d.regions[-(i+1)]
+            r_2_pres = getattr(self.cs2d, r_name2)
+            
+            thick_max = (r_1_suc.thickness + r_2_pres.thickness)
+            self.thickness_ratio[i] = thick_max / shape_thickness
+            self._logger.info('%f %f %f %f'%(y1, y2, shape_thickness, thick_max / shape_thickness))
+
 
 
     def _check_TE_thickness(self):
