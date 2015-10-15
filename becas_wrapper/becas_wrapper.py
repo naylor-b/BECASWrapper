@@ -6,15 +6,9 @@ import numpy as np
 import time
 import copy
 import commands
-import matplotlib as mpl
-
-from openmdao.lib.datatypes.api import Str, Array, VarTree, Instance, Enum, Dict, List, Bool, Int, Float
-from openmdao.main.api import Component
-
-from fusedwind.turbine.rotoraero_vt import LoadVectorCaseList
 
 def ksfunc(p, rho=50., side=1.):
-    """  
+    """
     Kreisselmeier and Steinhauser constraint aggregation function
 
     params
@@ -33,59 +27,64 @@ def ksfunc(p, rho=50., side=1.):
     return pmax + side * np.log(np.sum(np.exp(side * rho * (p - pmax)))) / rho
 
 
-class MaxFailure(object):
-    """
-    dummy class that fixes apparent issue between OpenMDAO
-    and Oct2Py with vartrees
-    """
-    cases = []
-
-
-class CrossSectionStructureDataVT(object):
-    """
-    dummy class that fixes apparent issue between OpenMDAO
-    and Oct2Py with vartrees
-    """
-    pass
-
-
-class BECASWrapper(Component):
+class BECASWrapper(object):
     u"""
-    OpenMDAO wrapper for BECAS 2D
+    Python wrapper for BECAS 2D
     =============================
 
     A basic wrapper of BECAS that provides two primary functionalities:
     computing cross-sectional properties and computing stresses,
     strains and check for material failure.
 
-    BECAS Inputs
-    ------------
-
-    BECAS 2D inputs (as defined in the manual). They all default to None and
-    are ignored if path_input is defined.
-
+    parameters
+    ----------
+    exec_mode: str
+        options: 'oct2py', 'octave', 'matlab'.
+        Run BECAS either using the Oct2Py bridge, a system call to matlab or to octave.
+    analysis_mode: str
+        options: 'stiffness', 'stress_recovery', 'combined'.
+        call BECAS to either compute stiffness properties
+        or to recover stresses or both.
+    utils_rst_filebase: str
+        file base name for mat files saved with BECAS utils. Default 'becas_utils'.
+    path_becas: str
+        absolute path to BECAS source files
+    timeout: float
+        timeout of BECAS call (only used in Oct2Py mode)
+    path_input: str
+        Relative path BECAS input files
+    path_plots: str
+        relative path to directory where plots are saved
+    checkmesh: bool
+        Activate BECAS check mesh
+    plot_paraview: bool
+        Export plot files for ParaView
+    span_pos: float
+        spanwise position of section along blade
+    hawc2_FPM: bool
+        Compute fully populated stiffness matrix beam properties
+    rho_ks: float
+        Kreisselmeier and Steinhauser aggregation parameter
     nl_2d : Array, default=None
         (:math:`n_n*3`) array with the list of nodal positions where each row
         is in the form (node number, x coordinate, y coordinate), where n_n is
         the total number of nodes. The node numbering need not be in any
         specific order.
-
-    el_2d : Array, default=None
+    el_2d : array, default=None
         (:math:`n_e*8`) array with the element connectivity table where each
         row is in the form (element number, node 1, node 2, node 3, node 4,
         node 5, node 6, node 7, node 8), where n e is the total number of
         elements. The element numbering need not be in any specific order. The
         value of node 5 through node 8 has to be zero for Quad4 element to be
         used. Otherwise, Quad8 is automatically chosen.
-
-    emat : Array, default=None
+    emat : array, default=None
         (:math:`n_e*4`) array with element material properties assignment where
         each row is in the form (element number, material number, fiber angle,
         fiber plane angle), where n_e is the total number of elements. The
         element numbering need not be in any specific order. The material
         number corresponds to the materials assigned in the matprops array.
 
-    matprops : Array, default=None
+    matprops : array, default=None
         (:math:`nmat*10`) array with the material properties where each row is
         in the form (:math:`E_{11}`, :math:`E_{22}`, :math:`E_{33}`,
         :math:`G_{12}`, :math:`G_{13}`, :math:`G_{23}`, :math:`\nu_{12}`,
@@ -106,55 +105,74 @@ class BECASWrapper(Component):
         The rotation of the material constitutive tensor is described in
         Section 3.2.
 
+
+    load_cases: array
+        List of section load vectors to calculate
+        stresses, strains and perform failure analysis
+
+    outputs
+    -------
+    cs_props: array
+        cross-sectional properties.
+        | standard beam, size: (19)
+        | s dm x_cg y_cg ri_x ri_y x_sh y_sh E G I_x I_y K k_x k_y A pitch x_e y_e
+        | populated stiffness matrix, size (30)
+        | s dm x_cg y_cg ri_x ri_y pitch x_e y_e K_11 K_12 K_13 K_14 K_15 K_16 K_22
+        | K_23 K_24 K_25 K_26 K_33 K_34 K_35 K_36 K_44 K_45 K_46 K_55 K_56 K_66
+    stress: array
+        stresses in each node
+    strain: array
+        strains in each node
+    max_failure: array
+        max failure index for each laod case aggregated with simple max function
+    max_failure_ks: array
+        max failure index for each laod case aggregated with ks function
     """
 
-    load_cases = VarTree(LoadVectorCaseList(), iotype='in', 
-                           desc='List of section load vectors to calculate'
-                                'stresses, strains and perform failure analysis')
-
-    exec_mode = Enum('octave', ['oct2py', 'octave', 'matlab'], desc='Run BECAS either using the Oct2Py bridge'
-                                                          'or using a system call to matlab')
-    analysis_mode = Enum('stiffness', ('stiffness', 'stress_recovery', 'combined'), iotype='in',
-                            desc='Specify which elements of BECAS to use')
-    utils_rst_filebase = Str('becas_utils', iotype='in')
-    timeout = Int(180, iotype='in')
-
-    # configuration: BECAS absolute file path
-    path_becas = Str(iotype='in', desc='Absolute path to BECAS source files')
-
-    # optional input files, file path relative to becas path
-    path_input = Str(iotype='in', desc='Relative path BECAS input files')
-    path_plots = Str('plots', iotype='in', desc='Relative path BECAS plot files')
-
-    # inputs
-    nl_2d = Array(iotype='in', desc='Nodal points (node nr, x, y)')
-
-    defs = '(Element number, node 1, n2, n3, ..., n8)'
-    el_2d = Array(iotype='in', desc='Elements %s' % defs)
-
-    defs = '(Element nr, material nr, fiber angle, fiberplane angle)'
-    emat  = Array(iotype='in', desc='Material per element %s' % defs)
-
-    matprops = Array(iotype='in', desc='Material properties (see docs)')
-    checkmesh = Bool(False,iotype='in',desc='Activate BECAS check mesh')
-    plot_paraview = Bool(False, iotype='in', desc='Export plot files for ParaView')
-    spanpos = Float(iotype='in')
-
-    hawc2_FPM = Bool(False, iotype='in',desc='Fully Populated Stiffness Matrix for Hawc2 beam')
-    hawc2_cross = Array(iotype='out', desc='HAWC2 cross section')
-    hawc2_crossVT = Instance(CrossSectionStructureDataVT(), iotype='out', desc='HAWC2 cross section')
-    stress = List(iotype='out')
-    strain = List(iotype='out')
-    max_failure = Instance(MaxFailure(), iotype='out')
-    max_failure_ks = Instance(MaxFailure(), iotype='out')
-    rho_ks = Float(50., iotype='in', desc='Kreisselmeier and Steinhauser aggregation parameter')
-
-    def __init__(self):
+    def __init__(self, spanpos=0., **kwargs):
         super(BECASWrapper, self).__init__()
 
         self.basedir = os.getcwd()
 
-    def execute(self):
+        self.dry_run = False
+        self.exec_mode = 'octave'
+        self.analysis_mode = 'stiffness'
+        self.utils_rst_filebase = 'becas_utils'
+        self.path_becas = ''
+        self.timeout = 180.
+        self.path_input = 'becas_inputs/BECAS_SECTION%3.3f' % spanpos
+        self.path_plots = 'plots'
+        self.checkmesh = False
+        self.plot_paraview = True
+        self.spanpos = spanpos
+        self.hawc2_FPM = False
+        self.rho_ks = 50.
+
+        self.nl_2d = np.array([])
+        self.el_2d = np.array([], dtype=int)
+        self.matprops = np.array([])
+
+        for k, w in kwargs.iteritems():
+            try:
+                setattr(self, k, w)
+            except:
+                pass
+
+        # outputs
+        if self.hawc2_FPM:
+            self.cs_size = 30
+            self.cs_props = np.zeros(30)
+        else:
+            self.cs_size = 19
+            self.cs_props = np.zeros(19)
+        self.cs_props[0] = spanpos
+
+        self.stress = np.array([])
+        self.strain = np.array([])
+        self.max_failure = np.array([])
+        self.max_failure_ks = np.array([])
+
+    def compute(self):
         """
         execute BECAS using either the Oct2Py bridge or matlab
         """
@@ -169,28 +187,25 @@ class BECASWrapper(Component):
                 self.execute_shell()
         except:
             if self.hawc2_FPM:
-                h2c = np.zeros(30)
+                self.cs_props = np.zeros(30)
             else:
-                h2c = np.zeros(19)
-            h2c[1] = 1.e6
-            self.write_output_vars(h2c)
-            self.max_failure.cases = np.zeros(len(self.load_cases.cases))
-            self._logger.info('BECAS crashed at R = %2.2f ...' % self.spanpos)
-        # import ipdb
-        # ipdb.set_trace()
+                self.cs_props = np.zeros(19)
+            self.cs_props[1] = 1.e6
+            # self.max_failure.cases = np.zeros(len(self.load_cases.cases))
+        #     self._logger.info('BECAS crashed at R = %2.2f ...' % self.spanpos)
+
         print ' BECAS calculation time: % 10.6f seconds' % (time.time() - tt)
-        self._logger.info(' BECAS calculation time: % 10.6f seconds' % (time.time() - tt))
+        # self._logger.info(' BECAS calculation time: % 10.6f seconds' % (time.time() - tt))
 
     def execute_shell(self):
         """
         Execute BECAS analysis as external program
         """
         out_str = []
-
         self.setup_path()
 
         self.utils_rst_filename = os.path.join(self.basedir, self.utils_rst_filebase + '%2.2f.mat' % self.spanpos)
-        self._logger.info('shell execution with analysis_mode = %s' % self.analysis_mode)
+        # self._logger.info('shell execution with analysis_mode = %s' % self.analysis_mode)
 
         out_str.append('BECAS_SetupPath;\n')
         out_str.append("options.foldername=fullfile('%s');\n" % os.path.join(os.getcwd(), self.path_input))
@@ -210,17 +225,18 @@ class BECASWrapper(Component):
                 fid.write(line)
         fid.close()
 
-        if self.exec_mode == 'octave':
-            out = commands.getoutput('octave becas_section.m')
+        if not self.dry_run:
+            if self.exec_mode == 'octave':
+                out = commands.getoutput('octave becas_section.m')
 
-        elif self.exec_mode == 'matlab':
-            out = commands.getoutput('matlab -nosplash -nodesktop -nojvm -r %s' % 'becas_section')
-        self._logger.info(out) 
+            elif self.exec_mode == 'matlab':
+                out = commands.getoutput('matlab -nosplash -nodesktop -nojvm -r %s' % 'becas_section')
+            print out
+            # self._logger.info(out)
 
-        if self.analysis_mode in ['stiffness', 'combined']:
-            h2vars = np.loadtxt('BECAS2HAWC2.out')
-            os.remove('BECAS2HAWC2.out')
-            self.write_output_vars(h2vars)
+            if self.analysis_mode in ['stiffness', 'combined']:
+                self.cs_props = np.loadtxt('BECAS2HAWC2.out')
+                os.remove('BECAS2HAWC2.out')
 
         if self.analysis_mode in ['combined', 'stress_recovery']:
             try:
@@ -241,7 +257,13 @@ class BECASWrapper(Component):
 
         out_str.append('[ utils ] = BECAS_Utils( options );\n')
         out_str.append('[constitutive.Ks,solutions] = BECAS_Constitutive_Ks(utils);\n')
-
+        if self.plot_paraview:  # and '-fd' not in self.itername:
+            path = os.path.join(self.basedir, self.path_plots)
+            if not os.path.exists(path):
+                os.mkdir(path)
+            dirname = os.path.join(path, '%s_span%3.3f' % ('Sec', self.spanpos))
+            # self._logger.info('BECAS_PARAVIEW: saving to %s' % dirname)
+            out_str.append("BECAS_PARAVIEW('%s', utils);\n" % dirname)
         return out_str
 
     def add_stiffness_calc(self, out_str):
@@ -253,15 +275,9 @@ class BECASWrapper(Component):
         out_str.append('[csprops] = BECAS_CrossSectionProps(constitutive.Ks,utils);\n')
         out_str.append('RadialPosition=%19.12g; \n' % self.spanpos)
         out_str.append("OutputFilename='%s'; \n" % 'BECAS2HAWC2.out')
-        out_str.append('BECAS_Becas2Hawc2(OutputFilename,RadialPosition,constitutive,csprops,utils,%s)\n' % str(self.hawc2_FPM).lower())
+        out_str.append("utils.hawc2_flag=%s ;\n" % str(not self.hawc2_FPM).lower())
+        out_str.append('BECAS_Becas2Hawc2(OutputFilename,RadialPosition,constitutive,csprops,utils)\n')
         out_str.append("save('%s', 'utils', 'solutions', 'csprops')\n" % self.utils_rst_filename)
-        if self.plot_paraview and '-fd' not in self.itername:
-            path = os.path.join(self.basedir, self.path_plots)
-            if not os.path.exists(path):
-                os.mkdir(path)
-            dirname = os.path.join(path, '%s_span%3.3f' % (self.parent.itername, self.spanpos))
-            # self._logger.info('BECAS_PARAVIEW: saving to %s' % dirname)
-            out_str.append("BECAS_PARAVIEW('%s', utils);\n" % dirname)
 
         return out_str
 
@@ -269,7 +285,7 @@ class BECASWrapper(Component):
 
         # load utils and solutions from saved file
         self.utils_rst_filename = os.path.join(self.basedir, self.utils_rst_filebase + '%2.2f.mat' % self.load_cases.s)
-        self._logger.info('checking for file %s' % self.utils_rst_filename)
+        # self._logger.info('checking for file %s' % self.utils_rst_filename)
         if self.analysis_mode == 'stress_recovery' and os.path.exists(self.utils_rst_filename):
             out_str.append("load('%s', 'utils', 'solutions', 'csprops')\n" % self.utils_rst_filename)
         else:
@@ -295,11 +311,11 @@ class BECASWrapper(Component):
                 out_str.append("FileName='failure%i.out';\n" % i)
                 out_str.append("eval(['save ' FileName ' failure -ascii -double']);\n")
 
-            if self.plot_paraview and '-fd' not in self.itername:
+            if self.plot_paraview:  # and '-fd' not in self.itername:
                 path = os.path.join(self.basedir, self.path_plots)
                 if not os.path.exists(path):
                     os.mkdir(path)
-                dirname = os.path.join(path, '%s_span%3.3f_case%i' % (self.parent.itername, self.load_cases.s, i))
+                dirname = os.path.join(path, '%s_span%3.3f_case%i' % ('Sec', self.load_cases.s, i))
                 # self._logger.info('BECAS_PARAVIEW: saving to %s' % dirname)
                 out_str.append("warping=solutions.X*theta0'; \n")
                 out_str.append("BECAS_PARAVIEW( '%s', utils, csprops, warping, strain.MaterialElement, stress.MaterialElement, failure )\n"
@@ -311,7 +327,7 @@ class BECASWrapper(Component):
         setup_path=("function BECAS_SetupPath\n"
                     "addpath(genpath(fullfile('%s','BECAS_elemlib')))\n"
                     "addpath(genpath(fullfile('%s','BECAS_examples')))\n"
-                    "addpath(genpath(fullfile('%s','BECAS_fea')))\n" 
+                    "addpath(genpath(fullfile('%s','BECAS_fea')))\n"
                     "addpath(genpath(fullfile('%s','BECAS_solve')))\n"
                     "addpath(genpath(fullfile('%s','BECAS_post')))\n"
                     "addpath(genpath(fullfile('%s','BECAS_main')))\n"
@@ -326,59 +342,6 @@ class BECASWrapper(Component):
         fid = open('BECAS_SetupPath.m','w')
         fid.write(setup_path)
         fid.close()
-
-    def write_output_vars(self, h2c):
-        if self.hawc2_FPM:
-            self.hawc2_crossVT.s = self.spanpos
-            self.hawc2_crossVT.dm = h2c[1]
-            self.hawc2_crossVT.x_cg = h2c[2]
-            self.hawc2_crossVT.y_cg = h2c[3]
-            self.hawc2_crossVT.ri_x = h2c[4]
-            self.hawc2_crossVT.ri_y = h2c[5]
-            self.hawc2_crossVT.pitch = h2c[6]
-            self.hawc2_crossVT.x_e = h2c[7]
-            self.hawc2_crossVT.y_e = h2c[8]
-            self.hawc2_crossVT.K_11 = h2c[9]
-            self.hawc2_crossVT.K_12 = h2c[10]
-            self.hawc2_crossVT.K_13 = h2c[11]
-            self.hawc2_crossVT.K_14 = h2c[12]
-            self.hawc2_crossVT.K_15 = h2c[13]
-            self.hawc2_crossVT.K_16 = h2c[14]
-            self.hawc2_crossVT.K_22 = h2c[15]
-            self.hawc2_crossVT.K_23 = h2c[16]
-            self.hawc2_crossVT.K_24 = h2c[17]
-            self.hawc2_crossVT.K_25 = h2c[18]
-            self.hawc2_crossVT.K_26 = h2c[19]
-            self.hawc2_crossVT.K_33 = h2c[20]
-            self.hawc2_crossVT.K_34 = h2c[21]
-            self.hawc2_crossVT.K_35 = h2c[22]
-            self.hawc2_crossVT.K_36 = h2c[23]
-            self.hawc2_crossVT.K_44 = h2c[24]
-            self.hawc2_crossVT.K_45 = h2c[25]
-            self.hawc2_crossVT.K_46 = h2c[26]
-            self.hawc2_crossVT.K_55 = h2c[27]
-            self.hawc2_crossVT.K_56 = h2c[28]
-            self.hawc2_crossVT.K_66 = h2c[29]
-        else:
-            self.hawc2_crossVT.s = self.spanpos
-            self.hawc2_crossVT.dm = h2c[1]
-            self.hawc2_crossVT.x_cg = h2c[2]
-            self.hawc2_crossVT.y_cg = h2c[3]
-            self.hawc2_crossVT.ri_x = h2c[4]
-            self.hawc2_crossVT.ri_y = h2c[5]
-            self.hawc2_crossVT.x_sh = h2c[6]
-            self.hawc2_crossVT.y_sh = h2c[7]
-            self.hawc2_crossVT.E = h2c[8]
-            self.hawc2_crossVT.G = h2c[9]
-            self.hawc2_crossVT.I_x = h2c[10]
-            self.hawc2_crossVT.I_y = h2c[11]
-            self.hawc2_crossVT.K = h2c[12]
-            self.hawc2_crossVT.k_x = h2c[13]
-            self.hawc2_crossVT.k_y = h2c[14]
-            self.hawc2_crossVT.A = h2c[15]
-            self.hawc2_crossVT.pitch = h2c[16]
-            self.hawc2_crossVT.x_e = h2c[17]
-            self.hawc2_crossVT.y_e = h2c[18]
 
     def execute_oct2py(self):
         """
@@ -408,7 +371,7 @@ class BECASWrapper(Component):
             msg = "path_becas is empty, please define a valid absolute path to BECAS"
             raise ValueError, msg
 
-        self._logger.info('executing BECAS ...')
+        # self._logger.info('executing BECAS ...')
 
         # to run concurrently you need a unique instance of oct2py, ie Oct2Py()
         # but this still seems to leave old instances of octave floating around
@@ -468,7 +431,7 @@ class BECASWrapper(Component):
             t0 = time.time()
             oc("RadPos=1;") # Define radial position
             inputs = 'false, RadPos, constitutive, csprops, utils,' + str(self.hawc2_FPM).lower()
-            oc("[hawc2_cross] = BECAS_Becas2Hawc2(%s);" % inputs)
+            oc("[cs_props] = BECAS_Becas2Hawc2(%s);" % inputs)
             # self._logger.info('BECAS_Becas2Hawc2: % 10.6f seconds' % (time.time() - t0))
             self.paraview_octave()
             # obtain the output variables from Octave
@@ -485,9 +448,8 @@ class BECASWrapper(Component):
             else:
                 h2c = np.zeros(19)
             h2c[1] = 2.e3
-            self.write_output_vars(h2c)
             self.paraview_octave(force=True)
-            self._logger.info('BECAS crashed ...')
+            # self._logger.info('BECAS crashed ...')
         self.octave.close()
 
     def load_input_vars(self):
@@ -507,10 +469,6 @@ class BECASWrapper(Component):
         Obtain all BECAS output variables through Octave
         """
 
-        # hack to fix apparent bug in OpenMDAO that doesn't copy
-        # the vartree object for each new case iteration
-        self.hawc2_crossVT = copy.deepcopy(self.hawc2_crossVT)
-
         # These are nested variables in Octave, they become dictionaries
         # in Python.
 
@@ -523,9 +481,8 @@ class BECASWrapper(Component):
 #        self.solutions    = octave.get('solutions')
 #        self.strain       = octave.get('strain')
 #        self.stress       = octave.get('stress')
-        self.hawc2_cross  = self.octave.get('hawc2_cross')
-        h2c = self.hawc2_cross[0]
-        self.write_output_vars(h2c)
+        self.cs_props  = self.octave.get('cs_props')
+        h2c = self.cs_props[0]
 
     def put_input_vars_oct2py(self):
         """
@@ -552,7 +509,7 @@ class BECASWrapper(Component):
             Forces and moments in x, y and z directions
 
         """
-        
+
         if len(self.load_cases.cases) == 0:
             return
 
@@ -593,7 +550,7 @@ class BECASWrapper(Component):
 
             if self.plot_paraview:
                 if 'fd' in self.parent.itername:
-                    continue 
+                    continue
                 path = os.path.join(self.basedir, self.path_plots)
                 if not os.path.exists(path):
                     os.mkdir(path)
@@ -731,4 +688,3 @@ class BECASWrapper(Component):
 
 if __name__ == '__main__':
     pass
-

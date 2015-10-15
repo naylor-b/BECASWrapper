@@ -16,15 +16,13 @@ kwargs = {'author': '',
  'maintainer': '',
  'maintainer_email': '',
  'name': 'becas_wrapper',
- 'package_data': {'becas_wrapper': []},
- 'package_dir': {'': 'becas_wrapper'},
  'packages': ['becas_wrapper'],
  'dependency_links':['https://github.com/blink1073/oct2py/tarball/master#egg=oct2py'],
  'url': '',
  'version': '0.1',
  'zip_safe': False}
 
- if 'Windows' not in platform.platform():
+if 'Windows' not in platform.platform():
     kwargs['install_requires'].append('pexpect')
 
 
