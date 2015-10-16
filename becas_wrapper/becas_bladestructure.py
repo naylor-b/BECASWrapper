@@ -11,6 +11,7 @@ from openmdao.components import IndepVarComp
 from cs2dtobecas import CS2DtoBECAS
 from becas_wrapper import BECASWrapper
 
+from fusedwind.lib.geom_tools import calculate_length
 
 class BECASCSStructure(Component):
     """
@@ -53,6 +54,20 @@ class BECASCSStructure(Component):
     """
 
     def __init__(self, config, st3d, s, ni_chord, cs_size):
+        """
+        parameters
+        ----------
+        config: dict
+            dictionary with inputs to CS2DtoBECAS and BECASWrapper
+        st3d: dict
+            dictionary with blade structural definition
+        s: array
+            spanwise location of the cross-section
+        ni_chord: int
+            number of points definiting the cross-section shape
+        cs_size: int
+            size of beam_structure array (19 or 30)
+        """
         super(BECASCSStructure, self).__init__()
 
         self.basedir = os.getcwd()
@@ -112,7 +127,11 @@ class BECASCSStructure(Component):
         self.mesher = CS2DtoBECAS(self.cs2d, **config['CS2DtoBECAS'])
         self.becas = BECASWrapper(self.cs2d['s'], **config['BECASWrapper'])
 
-    def params2dict(self, params):
+    def _params2dict(self, params):
+        """
+        convert the OpenMDAO params dictionary into
+        the dictionary format used in CS2DtoBECAS.
+        """
 
         self.cs2d['coords'] = params['coords'][:, :2]
         self.cs2d['matprops'] = params['matprops']
@@ -146,14 +165,10 @@ class BECASCSStructure(Component):
             self.cs2d['webs'][ireg]['layers'] = layers
 
     def solve_nonlinear(self, params, unknowns, resids):
-
-        if self.comm:
-            print 'rank %i computing props for section %3.3f %i %i' % \
-                                    (self.comm.rank, params['coords'][0, 2],
-                                     params['coords'].shape[0], params['coords'].shape[1])
-        else:
-            print 'computing props for section', params['coords'][0, 2]
-
+        """
+        calls CS2DtoBECAS/shellexpander to generate mesh
+        and BECAS to compute the cs_props
+        """
         workdir = 'sec%3.3f' % self.cs2d['s']
         try:
             os.mkdir(workdir)
@@ -192,6 +207,14 @@ class Slice(Component):
     """
 
     def __init__(self, DPs, surface):
+        """
+        parameters
+        ----------
+        DPs: array
+            DPs array, size: ((nsec, nDP))
+        surface: array
+            blade surface. Size: ((ni_chord, nsec, 3))
+        """
         super(Slice, self).__init__()
 
         self.nsec = surface.shape[1]
@@ -209,7 +232,7 @@ class Slice(Component):
             unknowns['sec%03dcoords' % i] = params['surface'][:, i, :]
 
 
-class Postprocess(Component):
+class PostprocessCS(Component):
     """
     component for gathering cross section props
     into array as function of span
@@ -218,38 +241,75 @@ class Postprocess(Component):
     ----------
     cs_props<xxx>: array
         array of cross section props. Size (19).
-    blade_s: array
-        dimensionalised running length of blade
+    blade_x: array
+        dimensionalised x-coordinate of blade axis
+    blade_y: array
+        dimensionalised y-coordinate of blade axis
+    blade_z: array
+        dimensionalised z-coordinate of blade axis
     hub_radius: float
-        dimensionalised hub radius
+        dimensionalised hub length
 
     returns
     -------
     beam_structure: array
         array of beam structure properties. Size ((nsec, 19)).
+    blade_mass: float
+        blade mass integrated from dm in beam properties
+    blade_mass_moment: float
+        blade mass moment integrated from dm in beam properties
     """
 
     def __init__(self, nsec, cs_size):
-        super(Postprocess, self).__init__()
+        """
+        parameters
+        ----------
+        nsec: int
+            number of blade sections.
+        cs_size: int
+            size of beam_structure array (19 or 30).
+        """
+        super(PostprocessCS, self).__init__()
 
         self.nsec = nsec
 
         for i in range(nsec):
-            self.add_param('cs_props%03d' % i, np.zeros(cs_size))
-        self.add_param('blade_s', np.zeros(nsec))
-        self.add_param('hub_radius', 0.)
+            self.add_param('cs_props%03d' % i, np.zeros(cs_size), desc='cross-sectional props for sec%03d' % i)
+        self.add_param('hub_radius', 0., units='m', desc='Hub length')
+        self.add_param('blade_x', np.zeros(nsec), units='m', desc='dimensionalised x-coordinate of blade axis')
+        self.add_param('blade_y', np.zeros(nsec), units='m', desc='dimensionalised y-coordinate of blade axis')
+        self.add_param('blade_z', np.zeros(nsec), units='m', desc='dimensionalised y-coordinate of blade axis')
 
 
-        self.add_output('beam_structure', np.zeros((nsec, cs_size)))
-        self.add_output('blade_mass', 0.)
-        self.add_output('blade_mass_moment', 0.)
+        self.add_output('beam_structure', np.zeros((nsec, cs_size)), desc='Beam properties of the blade')
+        self.add_output('blade_mass', 0., units='kg', desc='Blade mass')
+        self.add_output('blade_mass_moment', 0., units='N*m', desc='Blade mass moment')
 
     def solve_nonlinear(self, params, unknowns, resids):
-
+        """
+        aggregate results and integrate mass and mass moment using np.trapz.
+        """
         for i in range(self.nsec):
             cname = 'cs_props%03d' % i
             cs = params[cname]
             unknowns['beam_structure'][i, :] = cs
+
+        # compute mass and mass moment
+        x = params['blade_x']
+        y = params['blade_y']
+        z = params['blade_z']
+        hub_radius = params['hub_radius']
+        s = calculate_length(np.array([x, y, z]).T)
+        dm = unknowns['beam_structure'][:, 1]
+        g = 9.81
+
+        # mass
+        m = np.trapz(dm, s)
+        unknowns['blade_mass'] = m
+
+        # mass moment
+        mm = np.trapz(g * dm * (z + hub_radius), s)
+        unknowns['blade_mass_moment'] = mm
 
 
 class BECASBeamStructure(Group):
@@ -262,6 +322,12 @@ class BECASBeamStructure(Group):
 
     parameters
     ----------
+    blade_x: array
+        dimensionalised x-coordinate of blade axis
+    blade_y: array
+        dimensionalised y-coordinate of blade axis
+    blade_z: array
+        dimensionalised z-coordinate of blade axis
     matprops: array
         material stiffness properties. Size (10, nmat).
     failmat: array
@@ -303,8 +369,26 @@ class BECASBeamStructure(Group):
         """
         super(BECASBeamStructure, self).__init__()
 
+        # check that the config is ok
+        if not 'CS2DtoBECAS' in config.keys():
+            raise RuntimeError('You need to supply a config dict',
+                               'for CS2DtoBECAS')
+        if not 'BECASWrapper' in config.keys():
+            raise RuntimeError('You need to supply a config dict',
+                               'for BECASWrapper')
         try:
-            if config['BECASCSStructure']['BECASWrapper']['hawc2_FPM']:
+            analysis_mode = config['BECASWrapper']['analysis_mode']
+            if not analysis_mode == 'stiffness':
+                config['BECASWrapper']['analysis_mode'] = 'stiffness'
+                print 'BECAS analysis mode wasnt set to `stiffness`,',\
+                      'trying to set it for you'
+        except:
+            print 'BECAS analysis mode wasnt set to `stiffness`,',\
+                  'trying to set it for you'
+            config['BECASWrapper']['analysis_mode'] = 'stiffness'
+
+        try:
+            if config['BECASWrapper']['hawc2_FPM']:
                 cs_size = 30
             else:
                 cs_size = 19
@@ -349,7 +433,7 @@ class BECASBeamStructure(Group):
 
         for i in range(nsec):
             secname = 'sec%03d' % i
-            cid.add(secname, BECASCSStructure(config['BECASCSStructure'], st3d,
+            cid.add(secname, BECASCSStructure(config, st3d,
                                               st3d['s'][i], surface.shape[0], cs_size))
             # create connections
             self.connect('matprops', 'cid.%s.matprops' % secname)
@@ -361,11 +445,14 @@ class BECASBeamStructure(Group):
                 self.connect(name + 'T', 'cid.%s.%sT' % (secname, name), src_indices=([i]))
                 self.connect(name + 'A', 'cid.%s.%sA' % (secname, name), src_indices=([i]))
 
-        self.add('postpro', Postprocess(nsec, cs_size), promotes=['hub_radius',
-                                                         'blade_s',
-                                                         'beam_structure',
-                                                         'blade_mass',
-                                                         'blade_mass_moment'])
+        promotions = ['hub_radius',
+                      'blade_x',
+                      'blade_y',
+                      'blade_z',
+                      'beam_structure',
+                      'blade_mass',
+                      'blade_mass_moment']
+        self.add('postpro', PostprocessCS(nsec, cs_size), promotes=promotions)
         for i in range(nsec):
             secname = 'sec%03d' % i
             self.connect('cid.%s.cs_props' % secname, 'postpro.cs_props%03d' % i)

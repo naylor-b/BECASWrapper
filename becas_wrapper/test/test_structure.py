@@ -4,7 +4,7 @@ import numpy as np
 import unittest
 
 from openmdao.core.mpi_wrap import MPI
-from openmdao.core import Problem
+from openmdao.core import Problem, Group
 
 from fusedwind.turbine.structure import read_bladestructure, interpolate_bladestructure
 from becas_wrapper.becas_bladestructure import BECASBeamStructure
@@ -130,7 +130,7 @@ from PGL.components.loftedblade import LoftedBladeSurface
 from PGL.main.planform import read_blade_planform, redistribute_planform
 
 
-def configure(nsec, dry_run=False, FPM=False):
+def configure(nsec, dry_run=False, FPM=False, with_sr=False):
     pf = read_blade_planform('data/DTU_10MW_RWT_blade_axis_prebend.dat')
 
     s_new = np.linspace(0, 1, nsec)
@@ -162,20 +162,26 @@ def configure(nsec, dry_run=False, FPM=False):
 
     # inputs to CS2DtoBECAS and BECASWrapper
     config = {}
-    config['BECASCSStructure'] = {}
     cfg = {}
     cfg['dry_run'] = dry_run
     cfg['path_shellexpander'] = '/Users/frza/git/BECAS_stable/shellexpander/shellexpander'
     cfg['dominant_elsets'] = ['REGION04', 'REGION08']
     cfg['max_layers'] = 0
-    config['BECASCSStructure']['CS2DtoBECAS'] = cfg
+    config['CS2DtoBECAS'] = cfg
     cfg = {}
     cfg['path_becas'] = '/Users/frza/git/BECAS_stable/BECAS/src/matlab'
     cfg['hawc2_FPM'] = FPM
     cfg['dry_run'] = dry_run
-    config['BECASCSStructure']['BECASWrapper'] = cfg
+    cfg['analysis_mode'] = 'stiffness'
+    config['BECASWrapper'] = cfg
 
-    p = Problem(impl=impl, root=BECASBeamStructure(config, st3dn, d.surfnorot))
+    p = Problem(impl=impl, root=Group())
+    p.root.add('stiffness', BECASBeamStructure(config, st3dn, d.surfnorot), promotes=['*'])
+    p.setup()
+    p['hub_radius'] = 2.8
+    p['blade_x'] = d.pf['x'] * 86.366
+    p['blade_z'] = d.pf['y'] * 86.366
+    p['blade_y'] = d.pf['z'] * 86.366
     return p
 
 class BECASWrapperTestCase(unittest.TestCase):
@@ -191,15 +197,16 @@ class BECASWrapperTestCase(unittest.TestCase):
     def test_dry_run(self):
 
         p = configure(4, True)
-        p.setup()
         p.run()
 
-    def test_standard(self):
+    def test_stiffness_run(self):
 
         p = configure(4, False, False)
-        p.setup()
         p.run()
         self.assertEqual(np.testing.assert_array_almost_equal(p['beam_structure'], beam_st, decimal=4), None)
+
+        self.assertAlmostEqual(p['blade_mass'], 42501.309314525213, places=6)
+        self.assertAlmostEqual(p['blade_mass_moment'], 1024100.0975330817, places=6)
 
     # def test_FPM(self):
     #
@@ -208,9 +215,16 @@ class BECASWrapperTestCase(unittest.TestCase):
     #     p.run()
     #     self.assertEqual(np.testing.assert_array_almost_equal(p['beam_structure'], beam_st_FPM, decimal=6), None)
 
+    # def test_stiffness_and_stress_recovery_run(self):
+    #
+    #     p = configure(4, False, False, True)
+    #     p.setup()
+    #     p.run()
+    #     self.assertEqual(np.testing.assert_array_almost_equal(p['beam_structure'], beam_st, decimal=4), None)
+
+
 if __name__ == "__main__":
 
     unittest.main()
     # p = configure(4, False, True)
-    # p.setup()
     # p.run()
