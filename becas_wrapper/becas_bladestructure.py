@@ -176,7 +176,7 @@ class BECASCSStructure(Component):
             pass
         os.chdir(workdir)
 
-        self.params2dict(params)
+        self._params2dict(params)
 
         self.mesher.cs2d = self.cs2d
         self.mesher.compute()
