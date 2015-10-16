@@ -195,7 +195,7 @@ class BECASWrapper(object):
         out_str = []
         self.setup_path()
 
-        self.utils_rst_filename = os.path.join(self.basedir, self.utils_rst_filebase + '%2.2f.mat' % self.spanpos)
+        self.utils_rst_filename = os.path.join(self.basedir, self.utils_rst_filebase + '%3.3f.mat' % self.spanpos)
         # self._logger.info('shell execution with analysis_mode = %s' % self.analysis_mode)
 
         out_str.append('BECAS_SetupPath;\n')
@@ -275,7 +275,7 @@ class BECASWrapper(object):
     def add_stress_recovery(self, out_str):
 
         # load utils and solutions from saved file
-        self.utils_rst_filename = os.path.join(self.basedir, self.utils_rst_filebase + '%2.2f.mat' % self.load_cases.s)
+        self.utils_rst_filename = os.path.join(self.basedir, self.utils_rst_filebase + '%3.3f.mat' % self.load_cases.s)
         # self._logger.info('checking for file %s' % self.utils_rst_filename)
         if self.analysis_mode == 'stress_recovery' and os.path.exists(self.utils_rst_filename):
             out_str.append("load('%s', 'utils', 'solutions', 'csprops')\n" % self.utils_rst_filename)
