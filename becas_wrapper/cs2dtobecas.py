@@ -1,4 +1,3 @@
-__all__ = ['BECASWrapper']
 
 import os
 import time

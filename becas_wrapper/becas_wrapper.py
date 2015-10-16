@@ -28,10 +28,7 @@ def ksfunc(p, rho=50., side=1.):
 
 
 class BECASWrapper(object):
-    u"""
-    Python wrapper for BECAS 2D
-    =============================
-
+    """
     A basic wrapper of BECAS that provides two primary functionalities:
     computing cross-sectional properties and computing stresses,
     strains and check for material failure.
@@ -65,60 +62,54 @@ class BECASWrapper(object):
         Compute fully populated stiffness matrix beam properties
     rho_ks: float
         Kreisselmeier and Steinhauser aggregation parameter
-    nl_2d : Array, default=None
-        (:math:`n_n*3`) array with the list of nodal positions where each row
+    nl_2d: array
+        size: ((n_n, 3)) array with the list of nodal positions where each row
         is in the form (node number, x coordinate, y coordinate), where n_n is
         the total number of nodes. The node numbering need not be in any
         specific order.
-    el_2d : array, default=None
-        (:math:`n_e*8`) array with the element connectivity table where each
+    el_2d: array
+        size: ((n_e, 8)). Array with the element connectivity table where each
         row is in the form (element number, node 1, node 2, node 3, node 4,
         node 5, node 6, node 7, node 8), where n e is the total number of
         elements. The element numbering need not be in any specific order. The
         value of node 5 through node 8 has to be zero for Quad4 element to be
         used. Otherwise, Quad8 is automatically chosen.
-    emat : array, default=None
-        (:math:`n_e*4`) array with element material properties assignment where
+    emat: array
+        size: ((n_e, 4)). Array with element material properties assignment where
         each row is in the form (element number, material number, fiber angle,
         fiber plane angle), where n_e is the total number of elements. The
         element numbering need not be in any specific order. The material
         number corresponds to the materials assigned in the matprops array.
-
-    matprops : array, default=None
-        (:math:`nmat*10`) array with the material properties where each row is
-        in the form (:math:`E_{11}`, :math:`E_{22}`, :math:`E_{33}`,
-        :math:`G_{12}`, :math:`G_{13}`, :math:`G_{23}`, :math:`\nu_{12}`,
-        :math:`\nu_{13}`, :math:`\nu_{23}`, :math:`\varrho`), where nmat is the
-        total number of different materials considered. The material mechanical
-        properties given with respect to the material coordinate system are
-        defined as:
-            * :math:`E_{11}` the Young modulus of material the 1 direction.
-            * :math:`E_{22}` the Young modulus of material the 2 direction.
-            * :math:`E_{33}` the Young modulus of material the 3 direction.
-            * :math:`G_{12}` the shear modulus in the 12 plane.
-            * :math:`G_{13}` the shear modulus in the 13 plane.
-            * :math:`G_{23}` the shear modulus in the 23 plane.
-            * :math:`\nu_{12}` the Poisson's ratio in the 12 plane.
-            * :math:`\nu_{13}` the Poisson's ratio in the 13 plane.
-            * :math:`\nu_{23}` the Poisson's ratio in the 23 plane.
-            * :math:`\varrho` the material density.
+    matprops: array
+        size ((nmat, 10)) array with the material properties where nmat is the
+        total number of different materials considered.
+        The material mechanical properties given with respect to the
+        material coordinate system are defined as:
+          | * E11 the Young modulus of material the 1 direction.
+          | * E22 the Young modulus of material the 2 direction.
+          | * E33 the Young modulus of material the 3 direction.
+          | * G12 the shear modulus in the 12 plane.
+          | * G13 the shear modulus in the 13 plane.
+          | * G23 the shear modulus in the 23 plane.
+          | * nu12 the Poisson's ratio in the 12 plane.
+          | * nu13 the Poisson's ratio in the 13 plane.
+          | * nu23 the Poisson's ratio in the 23 plane.
+          | * rho the material density.
         The rotation of the material constitutive tensor is described in
         Section 3.2.
-
-
     load_cases: array
         List of section load vectors to calculate
         stresses, strains and perform failure analysis
 
-    outputs
+    returns
     -------
     cs_props: array
         cross-sectional properties.
-        | standard beam, size: (19)
-        | s dm x_cg y_cg ri_x ri_y x_sh y_sh E G I_x I_y K k_x k_y A pitch x_e y_e
-        | populated stiffness matrix, size (30)
-        | s dm x_cg y_cg ri_x ri_y pitch x_e y_e K_11 K_12 K_13 K_14 K_15 K_16 K_22
-        | K_23 K_24 K_25 K_26 K_33 K_34 K_35 K_36 K_44 K_45 K_46 K_55 K_56 K_66
+          | HAWC2 beam properties, size (19):
+          | s dm x_cg y_cg ri_x ri_y x_sh y_sh E G I_x I_y K k_x k_y A pitch x_e y_e
+          | Fully populated stiffness matrix, size (30):
+          | s dm x_cg y_cg ri_x ri_y pitch x_e y_e K_11 K_12 K_13 K_14 K_15 K_16 K_22
+          | K_23 K_24 K_25 K_26 K_33 K_34 K_35 K_36 K_44 K_45 K_46 K_55 K_56 K_66
     stress: array
         stresses in each node
     strain: array
@@ -345,9 +336,6 @@ class BECASWrapper(object):
 
     def execute_oct2py(self):
         """
-        Execute BECAS analysis
-        ======================
-
         Uses oct2py Octave to Python bridge to execute all required analysis
         in BECAS.
 
@@ -502,7 +490,7 @@ class BECASWrapper(object):
     def stress_recovery_oct2py(self):
         """
 
-        Parameters
+        parameters
         ----------
 
         loadvector : ndarray(6)

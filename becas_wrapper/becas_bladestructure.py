@@ -44,7 +44,7 @@ class BECASCSStructure(Component):
     w<xx><lname>A: float
         web angles, e.g. r01triaxA.
 
-    outputs
+    returns
     -------
     cs_props: array
         vector of cross section properties. Size (19) or (30)
@@ -183,7 +183,7 @@ class Slice(Component):
     surface: array
         blade surface. Size: ((ni_chord, nsec, 3))
 
-    outputs
+    returns
     -------
     sec<xxx>DPs: array
         Vector of DPs along chord for each section. Size (nDP)
@@ -223,7 +223,7 @@ class Postprocess(Component):
     hub_radius: float
         dimensionalised hub radius
 
-    outputs
+    returns
     -------
     beam_structure: array
         array of beam structure properties. Size ((nsec, 19)).
@@ -279,7 +279,7 @@ class BECASBeamStructure(Group):
     w<xx><lname>A: array
         web layer angles, e.g. r01triaxA. Size (nsec)
 
-    outputs
+    returns
     -------
     beam_structure: array
         array of beam structure properties. Size ((nsec, 19)).

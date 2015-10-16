@@ -14,8 +14,6 @@ Package Metadata
 
 - **name:** becas_wrapper
 
-- **requires-dist:** openmdao.main
-
 - **requires-python**:: 
 
     >=2.6
