@@ -4,9 +4,11 @@ import numpy as np
 import unittest
 
 from openmdao.core.mpi_wrap import MPI
-from openmdao.core import Problem, Group
+from openmdao.api import Problem, Group, IndepVarComp
 
-from fusedwind.turbine.structure import read_bladestructure, interpolate_bladestructure
+from fusedwind.turbine.structure import read_bladestructure, \
+                                        interpolate_bladestructure, \
+                                        SplinedBladeStructure
 from becas_wrapper.becas_bladestructure import BECASBeamStructure
 
 beam_st_FPM = np.array([[  0.0000000000000000e+00,   1.1952118833699999e+03,
@@ -124,42 +126,58 @@ if MPI:
     from openmdao.core.petsc_impl import PetscImpl as impl
 else:
     # if you didn't use `mpirun`, then use the numpy data passing
-    from openmdao.core import BasicImpl as impl
+    from openmdao.core.basic_impl import BasicImpl as impl
 
-from PGL.components.loftedblade import LoftedBladeSurface
-from PGL.main.planform import read_blade_planform, redistribute_planform
+from fusedwind.turbine.geometry import read_blade_planform,\
+                                       redistribute_planform,\
+                                       PGLLoftedBladeSurface,\
+                                       SplinedBladePlanform, \
+                                       PGLRedistributedPlanform
+
 
 
 def configure(nsec, dry_run=False, FPM=False, with_sr=False):
+
+    p = Problem(impl=impl, root=Group())
+
+    p.root.add('blade_length_c', IndepVarComp('blade_length', 86.366), promotes=['*'])
+
     pf = read_blade_planform('data/DTU_10MW_RWT_blade_axis_prebend.dat')
+    nsec_ae = 50
+    nsec_st = 8
+    s_ae = np.linspace(0, 1, nsec_ae)
+    s_st = np.linspace(0, 1, nsec_st)
+    pf = redistribute_planform(pf, s=s_ae)
 
-    s_new = np.linspace(0, 1, nsec)
+    spl = p.root.add('pf_splines', SplinedBladePlanform(pf), promotes=['*'])
+    spl.configure()
+    redist = p.root.add('pf_st', PGLRedistributedPlanform('_st', nsec_ae, s_st), promotes=['*'])
 
-    pf = redistribute_planform(pf, s=s_new)
-
-    d = LoftedBladeSurface()
-    d.pf = pf
-    d.redistribute_flag = False
-    # d.minTE = 0.0002
-
-    d.blend_var = [0.241, 0.301, 0.36, 1.0]
+    cfg = {}
+    cfg['redistribute_flag'] = False
+    cfg['blend_var'] = np.array([0.241, 0.301, 0.36, 1.0])
+    afs = []
     for f in ['data/ffaw3241.dat',
               'data/ffaw3301.dat',
               'data/ffaw3360.dat',
               'data/cylinder.dat']:
 
-        d.base_airfoils.append(np.loadtxt(f))
-
-    d.update()
-    d.surface *= 86.366
-    d.surfnorot *= 86.366
+        afs.append(np.loadtxt(f))
+    cfg['base_airfoils'] = afs
+    surf = p.root.add('blade_surf', PGLLoftedBladeSurface(cfg, size_in=nsec_st,
+                                    size_out=(200, nsec_st, 3), suffix='_st'), promotes=['*'])
 
     # read the blade structure
     st3d = read_bladestructure('data/DTU10MW')
 
     # and interpolate onto new distribution
-    st3dn = interpolate_bladestructure(st3d, s_new)
+    st3dn = interpolate_bladestructure(st3d, s_st)
 
+    spl = p.root.add('st_splines', SplinedBladeStructure(st3dn), promotes=['*'])
+    spl.add_spline('DP04', np.linspace(0, 1, 4), spline_type='bezier')
+    spl.add_spline('r04uniaxT', np.linspace(0, 1, 4), spline_type='bezier')
+    spl.add_spline('w02biaxT', np.linspace(0, 1, 4), spline_type='bezier')
+    spl.configure()
     # inputs to CS2DtoBECAS and BECASWrapper
     config = {}
     cfg = {}
@@ -175,13 +193,16 @@ def configure(nsec, dry_run=False, FPM=False, with_sr=False):
     cfg['analysis_mode'] = 'stiffness'
     config['BECASWrapper'] = cfg
 
-    p = Problem(impl=impl, root=Group())
-    p.root.add('stiffness', BECASBeamStructure(config, st3dn, d.surfnorot), promotes=['*'])
+    p.root.add('stiffness', BECASBeamStructure(p.root, config, st3dn, (200, nsec_st, 3)), promotes=['*'])
     p.setup()
-    p['hub_radius'] = 2.8
-    p['blade_x'] = d.pf['x'] * 86.366
-    p['blade_z'] = d.pf['y'] * 86.366
-    p['blade_y'] = d.pf['z'] * 86.366
+    for k, v in pf.iteritems():
+        if k in p.root.pf_splines.params.keys():
+            p.root.pf_splines.params[k] = v
+
+    # p['hub_radius'] = 2.8
+    # p['blade_x'] = d.pf['x'] * 86.366
+    # p['blade_z'] = d.pf['y'] * 86.366
+    # p['blade_y'] = d.pf['z'] * 86.366
     return p
 
 class BECASWrapperTestCase(unittest.TestCase):
@@ -225,6 +246,7 @@ class BECASWrapperTestCase(unittest.TestCase):
 
 if __name__ == "__main__":
 
-    unittest.main()
-    # p = configure(4, False, True)
-    # p.run()
+    # unittest.main()
+    p = configure(8, False, False)
+    p.run()
+    # print('mass %f'%p['blade_mass'])

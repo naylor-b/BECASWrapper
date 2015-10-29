@@ -5,8 +5,8 @@ import os
 from collections import OrderedDict
 from scipy.interpolate import pchip
 
-from openmdao.core import Component, Group, ParallelGroup
-from openmdao.components import IndepVarComp
+from openmdao.api import Component, Group, ParallelGroup
+from openmdao.api import IndepVarComp
 
 from cs2dtobecas import CS2DtoBECAS
 from becas_wrapper import BECASWrapper
@@ -53,7 +53,7 @@ class BECASCSStructure(Component):
         matrix, respectively.
     """
 
-    def __init__(self, config, st3d, s, ni_chord, cs_size):
+    def __init__(self, name, config, st3d, s, ni_chord, cs_size):
         """
         parameters
         ----------
@@ -66,7 +66,7 @@ class BECASCSStructure(Component):
         ni_chord: int
             number of points definiting the cross-section shape
         cs_size: int
-            size of beam_structure array (19 or 30)
+            size of blade_beam_structure array (19 or 30)
         """
         super(BECASCSStructure, self).__init__()
 
@@ -82,10 +82,10 @@ class BECASCSStructure(Component):
         self.add_param('failmat', st3d['failmat'])
 
         # add DPs array
-        self.add_param('DPs', np.zeros(self.nr + 1))
+        self.add_param('%s:DPs' % name, np.zeros(self.nr + 1))
 
         # add coords coords
-        self.add_param('coords', np.zeros((ni_chord, 3)))
+        self.add_param('%s:coords' % name, np.zeros((ni_chord, 3)))
 
         self.cs2d = {}
         self.cs2d['materials'] = st3d['materials']
@@ -105,7 +105,7 @@ class BECASCSStructure(Component):
             r['angles'] = np.zeros(nl)
             self.cs2d['regions'].append(r)
             for i, lname in enumerate(reg['layers']):
-                varname = 'r%02d%s' % (ireg, lname)
+                varname = '%s:r%02d%s' % (name, ireg, lname)
                 self.add_param(varname + 'T', 0.)
                 self.add_param(varname + 'A', 0.)
         for ireg, reg in enumerate(st3d['webs']):
@@ -116,13 +116,13 @@ class BECASCSStructure(Component):
             r['angles'] = np.zeros(nl)
             self.cs2d['webs'].append(r)
             for i, lname in enumerate(reg['layers']):
-                varname = 'w%02d%s' % (ireg, lname)
+                varname = '%s:w%02d%s' % (name, ireg, lname)
                 self.add_param(varname + 'T', 0.)
                 self.add_param(varname + 'A', 0.)
 
 
         # add outputs
-        self.add_output('cs_props', np.zeros(cs_size))
+        self.add_output('%s:cs_props' % name, np.zeros(cs_size))
 
         self.mesher = CS2DtoBECAS(self.cs2d, **config['CS2DtoBECAS'])
         self.becas = BECASWrapper(self.cs2d['s'], **config['BECASWrapper'])
@@ -133,16 +133,17 @@ class BECASCSStructure(Component):
         the dictionary format used in CS2DtoBECAS.
         """
 
-        self.cs2d['coords'] = params['coords'][:, :2]
+        self.cs2d['coords'] = params['%s:coords' % self.name][:, :2]
+        print self.name, params['%s:coords' % self.name][:, :2].shape
         self.cs2d['matprops'] = params['matprops']
         self.cs2d['failmat'] = params['failmat']
-        self.cs2d['DPs'] = params['DPs']
+        self.cs2d['DPs'] = params['%s:DPs' % self.name]
         for ireg, reg in enumerate(self.cs2d['regions']):
             Ts = []
             As = []
             layers = []
             for i, lname in enumerate(reg['layers']):
-                varname = 'r%02d%s' % (ireg, lname)
+                varname = '%s:r%02d%s' % (self.name, ireg, lname)
                 if params[varname + 'T'] > 0.:
                     Ts.append(params[varname + 'T'])
                     As.append(params[varname + 'A'])
@@ -155,7 +156,7 @@ class BECASCSStructure(Component):
             As = []
             layers = []
             for i, lname in enumerate(reg['layers']):
-                varname = 'w%02d%s' % (ireg, lname)
+                varname = '%s:w%02d%s' % (self.name, ireg, lname)
                 if params[varname + 'T'] > 0.:
                     Ts.append(params[varname + 'T'])
                     As.append(params[varname + 'A'])
@@ -181,7 +182,7 @@ class BECASCSStructure(Component):
         self.mesher.cs2d = self.cs2d
         self.mesher.compute()
         self.becas.compute()
-        self.unknowns['cs_props'] = self.becas.cs_props
+        self.unknowns['%s:cs_props' % self.name] = self.becas.cs_props
 
         os.chdir(self.basedir)
 
@@ -193,9 +194,9 @@ class Slice(Component):
 
     parameters
     ----------
-    DPs: array
-        2D array of DPs. Size: ((nsec, nDP))
-    surface: array
+    DP<xx>: array
+        arrays of DPs along span. Size: (nsec)
+    blade_surface_norm_st: array
         blade surface. Size: ((ni_chord, nsec, 3))
 
     returns
@@ -206,30 +207,39 @@ class Slice(Component):
         Array of cross section coords shapes. Size ((ni_chord, 3))
     """
 
-    def __init__(self, DPs, surface):
+    def __init__(self, st3d, sdim):
         """
         parameters
         ----------
         DPs: array
             DPs array, size: ((nsec, nDP))
-        surface: array
+        sdim: array
             blade surface. Size: ((ni_chord, nsec, 3))
         """
         super(Slice, self).__init__()
 
-        self.nsec = surface.shape[1]
+        self.nsec = sdim[1]
+        DPs = st3d['DPs']
+        self.nDP = DPs.shape[1]
 
-        self.add_param('DPs', DPs)
-        self.add_param('surface', surface)
+        for i in range(self.nDP):
+            self.add_param('DP%02d' % i, DPs[:, i])
+
+
+        self.add_param('blade_surface_st', np.zeros(sdim))
+
         for i in range(self.nsec):
-            self.add_output('sec%03dDPs' % i, DPs[i, :])
-            self.add_output('sec%03dcoords' % i, surface[:, i, :])
+            self.add_output('sec%03d:DPs' % i, DPs[i, :])
+            self.add_output('sec%03d:coords' % i, np.zeros((sdim[0], sdim[2])))
 
     def solve_nonlinear(self, params, unknowns, resids):
 
         for i in range(self.nsec):
-            unknowns['sec%03dDPs' % i] = params['DPs'][i, :]
-            unknowns['sec%03dcoords' % i] = params['surface'][:, i, :]
+            DPs = np.zeros(self.nDP)
+            for j in range(self.nDP):
+                DPs[j] = params['DP%02d' % j][i]
+            unknowns['sec%03d:DPs' % i] = DPs
+            unknowns['sec%03d:coords' % i] = params['blade_surface_st'][:, i, :]
 
 
 class PostprocessCS(Component):
@@ -252,7 +262,7 @@ class PostprocessCS(Component):
 
     returns
     -------
-    beam_structure: array
+    blade_beam_structure: array
         array of beam structure properties. Size ((nsec, 19)).
     blade_mass: float
         blade mass integrated from dm in beam properties
@@ -267,7 +277,7 @@ class PostprocessCS(Component):
         nsec: int
             number of blade sections.
         cs_size: int
-            size of beam_structure array (19 or 30).
+            size of blade_beam_structure array (19 or 30).
         """
         super(PostprocessCS, self).__init__()
 
@@ -276,12 +286,14 @@ class PostprocessCS(Component):
         for i in range(nsec):
             self.add_param('cs_props%03d' % i, np.zeros(cs_size), desc='cross-sectional props for sec%03d' % i)
         self.add_param('hub_radius', 0., units='m', desc='Hub length')
-        self.add_param('blade_x', np.zeros(nsec), units='m', desc='dimensionalised x-coordinate of blade axis')
-        self.add_param('blade_y', np.zeros(nsec), units='m', desc='dimensionalised y-coordinate of blade axis')
-        self.add_param('blade_z', np.zeros(nsec), units='m', desc='dimensionalised y-coordinate of blade axis')
+        self.add_param('blade_length', 0., units='m', desc='Blade length')
+
+        self.add_param('x_st', np.zeros(nsec), units='m', desc='dimensionalised x-coordinate of blade axis')
+        self.add_param('y_st', np.zeros(nsec), units='m', desc='dimensionalised y-coordinate of blade axis')
+        self.add_param('z_st', np.zeros(nsec), units='m', desc='dimensionalised y-coordinate of blade axis')
 
 
-        self.add_output('beam_structure', np.zeros((nsec, cs_size)), desc='Beam properties of the blade')
+        self.add_output('blade_beam_structure', np.zeros((nsec, cs_size)), desc='Beam properties of the blade')
         self.add_output('blade_mass', 0., units='kg', desc='Blade mass')
         self.add_output('blade_mass_moment', 0., units='N*m', desc='Blade mass moment')
 
@@ -292,15 +304,15 @@ class PostprocessCS(Component):
         for i in range(self.nsec):
             cname = 'cs_props%03d' % i
             cs = params[cname]
-            unknowns['beam_structure'][i, :] = cs
+            unknowns['blade_beam_structure'][i, :] = cs
 
         # compute mass and mass moment
-        x = params['blade_x']
-        y = params['blade_y']
-        z = params['blade_z']
+        x = params['x_st'] * params['blade_length']
+        y = params['y_st'] * params['blade_length']
+        z = params['z_st'] * params['blade_length']
         hub_radius = params['hub_radius']
         s = calculate_length(np.array([x, y, z]).T)
-        dm = unknowns['beam_structure'][:, 1]
+        dm = unknowns['blade_beam_structure'][:, 1]
         g = 9.81
 
         # mass
@@ -310,6 +322,8 @@ class PostprocessCS(Component):
         # mass moment
         mm = np.trapz(g * dm * (z + hub_radius), s)
         unknowns['blade_mass_moment'] = mm
+
+        print('blade mass %10.3f' % m)
 
 
 class BECASBeamStructure(Group):
@@ -323,37 +337,41 @@ class BECASBeamStructure(Group):
     parameters
     ----------
     blade_x: array
-        dimensionalised x-coordinate of blade axis
+        dimensionalised x-coordinates of blade axis with structural discretization.
     blade_y: array
-        dimensionalised y-coordinate of blade axis
+        dimensionalised y-coordinates of blade axis with structural discretization.
     blade_z: array
-        dimensionalised z-coordinate of blade axis
+        dimensionalised z-coordinates of blade axis with structural discretization.
+    blade_surface_st: array
+        blade surface with structural discretization. Size: ((ni_chord, nsec, 3))
     matprops: array
         material stiffness properties. Size (10, nmat).
     failmat: array
         material strength properties. Size (18, nmat).
-    DPs: array
+    sec<xx>DPs: array
         2D array of DPs. Size: ((nsec, nDP))
-    surface: array
+    sec<xx>coords: array
         blade surface. Size: ((ni_chord, nsec, 3))
-    r<xx><lname>T: array
+    sec<xx>r<yy><lname>T: array
         region layer thicknesses, e.g. r01triaxT. Size (nsec)
-    r<xx><lname>A: array
+    sec<xx>r<yy><lname>A: array
         region layer angles, e.g. r01triaxA. Size (nsec)
-    w<xx><lname>T: array
+    sec<xx>w<yy><lname>T: array
         web layer thicknesses, e.g. r01triaxT. Size (nsec)
-    w<xx><lname>A: array
+    sec<xx>w<yy><lname>A: array
         web layer angles, e.g. r01triaxA. Size (nsec)
 
     returns
     -------
-    beam_structure: array
+    blade_beam_structure: array
         array of beam structure properties. Size ((nsec, 19)).
     blade_mass: float
-        blade mass integrated from beam_structure dm
+        blade mass integrated from blade_beam_structure dm
+    blade_mass_moment: float
+        blade mass moment integrated from blade_beam_structure dm
     """
 
-    def __init__(self, config, st3d, surface):
+    def __init__(self, group, config, st3d, sdim):
         """
         initializes parameters and adds a csprops component
         for each section
@@ -365,7 +383,8 @@ class BECASBeamStructure(Group):
         st3d: dict
             dictionary of blade structure properties
         surface: array
-            blade surface. Size: ((ni_chord, nsec, 3))
+            blade surface with structural discretization.
+            Size: ((ni_chord, nsec, 3))
         """
         super(BECASBeamStructure, self).__init__()
 
@@ -399,60 +418,42 @@ class BECASBeamStructure(Group):
         nr = len(st3d['regions'])
         nsec = st3d['s'].shape[0]
 
-        # add materials properties array ((10, nmat))
-        self.add('matprops_c', IndepVarComp('matprops', st3d['matprops']), promotes=['*'])
-
-        # add materials strength properties array ((18, nmat))
-        self.add('failmat_c', IndepVarComp('failmat', st3d['failmat']), promotes=['*'])
-
-        # add DPs array with s, DP0, DP1, ... DP<nr>
-        self.add('DPs_c', IndepVarComp('DPs', st3d['DPs']), promotes=['*'])
-
-        # add array containing blade section coords
-        self.add('surface_c', IndepVarComp('surface', surface), promotes=['*'])
-
         # add comp to slice the 2D arrays DPs and surface
-        self.add('slice', Slice(st3d['DPs'], surface), promotes=['*'])
+        self.add('slice', Slice(st3d, sdim), promotes=['*'])
 
         self._varnames = []
         for ireg, reg in enumerate(st3d['regions']):
             for i, lname in enumerate(reg['layers']):
                 varname = 'r%02d%s' % (ireg, lname)
-                self.add(varname+'T_c', IndepVarComp(varname + 'T', reg['thicknesses'][:, i]), promotes=['*'])
-                self.add(varname+'A_c', IndepVarComp(varname + 'A', reg['angles'][:, i]), promotes=['*'])
                 self._varnames.append(varname)
         for ireg, reg in enumerate(st3d['webs']):
             for i, lname in enumerate(reg['layers']):
                 varname = 'w%02d%s' % (ireg, lname)
-                self.add(varname+'T_c', IndepVarComp(varname + 'T', reg['thicknesses'][:, i]), promotes=['*'])
-                self.add(varname+'A_c', IndepVarComp(varname + 'A', reg['angles'][:, i]), promotes=['*'])
                 self._varnames.append(varname)
 
-        # now add a component for each section
-        cid = self.add('cid', ParallelGroup())
+        # # now add a component for each section
+        par = self.add('par', ParallelGroup(), promotes=['*'])
 
         for i in range(nsec):
             secname = 'sec%03d' % i
-            cid.add(secname, BECASCSStructure(config, st3d,
-                                              st3d['s'][i], surface.shape[0], cs_size))
-            # create connections
-            self.connect('matprops', 'cid.%s.matprops' % secname)
-            self.connect('failmat', 'cid.%s.failmat' % secname)
-            self.connect(secname+'DPs', 'cid.%s.DPs' % secname)
-            self.connect(secname+'coords', 'cid.%s.coords' % secname)
+            par.add(secname, BECASCSStructure(secname, config, st3d,
+                                              st3d['s'][i], sdim[0], cs_size), promotes=['*'])
 
+            # passing the parent group down is not nice,
+            # but makes things a lot cleaner
             for name in self._varnames:
-                self.connect(name + 'T', 'cid.%s.%sT' % (secname, name), src_indices=([i]))
-                self.connect(name + 'A', 'cid.%s.%sA' % (secname, name), src_indices=([i]))
+                group.connect(name + 'T', '%s:%sT' % (secname, name), src_indices=([i]))
+                group.connect(name + 'A', '%s:%sA' % (secname, name), src_indices=([i]))
 
         promotions = ['hub_radius',
-                      'blade_x',
-                      'blade_y',
-                      'blade_z',
-                      'beam_structure',
+                      'blade_length',
+                      'x_st',
+                      'y_st',
+                      'z_st',
+                      'blade_beam_structure',
                       'blade_mass',
                       'blade_mass_moment']
         self.add('postpro', PostprocessCS(nsec, cs_size), promotes=promotions)
         for i in range(nsec):
             secname = 'sec%03d' % i
-            self.connect('cid.%s.cs_props' % secname, 'postpro.cs_props%03d' % i)
+            self.connect('%s:cs_props' % secname, 'postpro.cs_props%03d' % i)
