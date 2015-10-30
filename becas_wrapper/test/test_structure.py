@@ -144,7 +144,7 @@ def configure(nsec, dry_run=False, FPM=False, with_sr=False):
 
     pf = read_blade_planform('data/DTU_10MW_RWT_blade_axis_prebend.dat')
     nsec_ae = 50
-    nsec_st = 8
+    nsec_st = nsec 
     s_ae = np.linspace(0, 1, nsec_ae)
     s_st = np.linspace(0, 1, nsec_st)
     pf = redistribute_planform(pf, s=s_ae)
@@ -182,12 +182,12 @@ def configure(nsec, dry_run=False, FPM=False, with_sr=False):
     config = {}
     cfg = {}
     cfg['dry_run'] = dry_run
-    cfg['path_shellexpander'] = '/Users/frza/git/BECAS_stable/shellexpander/shellexpander'
+    cfg['path_shellexpander'] = '/home/frza/git/BECAS_stable/shellexpander/shellexpander'
     cfg['dominant_elsets'] = ['REGION04', 'REGION08']
     cfg['max_layers'] = 0
     config['CS2DtoBECAS'] = cfg
     cfg = {}
-    cfg['path_becas'] = '/Users/frza/git/BECAS_stable/BECAS/src/matlab'
+    cfg['path_becas'] = '/home/frza/git/BECAS_stable/BECAS/src/matlab'
     cfg['hawc2_FPM'] = FPM
     cfg['dry_run'] = dry_run
     cfg['analysis_mode'] = 'stiffness'
@@ -247,6 +247,14 @@ class BECASWrapperTestCase(unittest.TestCase):
 if __name__ == "__main__":
 
     # unittest.main()
-    p = configure(8, False, False)
+    import time
+    t0 = time.time()
+    p = configure(80, False, False)
+    t1 = time.time()
     p.run()
-    # print('mass %f'%p['blade_mass'])
+    t2 = time.time()
+    if p.root.comm.rank == 0:
+        print 'Total time:', t2-t0
+        print 'configure time:', t1-t0
+        print 'run time:', t2-t1
+        print('mass %f'%p['blade_mass'])
