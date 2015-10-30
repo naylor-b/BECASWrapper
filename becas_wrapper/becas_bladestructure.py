@@ -134,7 +134,6 @@ class BECASCSStructure(Component):
         """
 
         self.cs2d['coords'] = params['%s:coords' % self.name][:, :2]
-        print self.name, params['%s:coords' % self.name][:, :2].shape
         self.cs2d['matprops'] = params['matprops']
         self.cs2d['failmat'] = params['failmat']
         self.cs2d['DPs'] = params['%s:DPs' % self.name]
@@ -170,11 +169,21 @@ class BECASCSStructure(Component):
         calls CS2DtoBECAS/shellexpander to generate mesh
         and BECAS to compute the cs_props
         """
-        workdir = 'sec%3.3f' % self.cs2d['s']
-        try:
+        workdir = 'becas_sec%3.3f' % self.cs2d['s']
+
+        # dirty hack to deal with parallel FD
+        if os.path.exists(workdir):
+            newdir = workdir
+            for i in range(100):
+                try:
+                    newdir = workdir+'_%02d'%i
+                    os.mkdir(newdir)
+                    break
+                except:
+                    pass
+            workdir = newdir
+        else:
             os.mkdir(workdir)
-        except:
-            pass
         os.chdir(workdir)
 
         self._params2dict(params)
