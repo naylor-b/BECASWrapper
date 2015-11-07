@@ -85,6 +85,7 @@ class BECASCSStructure(Component):
         self.add_param('%s:DPs' % name, np.zeros(self.nr + 1))
 
         # add coords coords
+        self._varnames = []
         self.add_param('%s:coords' % name, np.zeros((ni_chord, 3)))
 
         self.cs2d = {}
@@ -106,8 +107,7 @@ class BECASCSStructure(Component):
             self.cs2d['regions'].append(r)
             for i, lname in enumerate(reg['layers']):
                 varname = '%s:r%02d%s' % (name, ireg, lname)
-                self.add_param(varname + 'T', 0.)
-                self.add_param(varname + 'A', 0.)
+                self._varnames.append(varname)
         for ireg, reg in enumerate(st3d['webs']):
             r = {}
             r['layers'] = reg['layers']
@@ -117,9 +117,8 @@ class BECASCSStructure(Component):
             self.cs2d['webs'].append(r)
             for i, lname in enumerate(reg['layers']):
                 varname = '%s:w%02d%s' % (name, ireg, lname)
-                self.add_param(varname + 'T', 0.)
-                self.add_param(varname + 'A', 0.)
-
+                self._varnames.append(varname)
+        self.add_param(name + ':tvec', np.zeros(len(self._varnames)*2))
 
         # add outputs
         self.add_output('%s:cs_props' % name, np.zeros(cs_size))
@@ -133,20 +132,25 @@ class BECASCSStructure(Component):
         the dictionary format used in CS2DtoBECAS.
         """
 
+        tvec = params[self.name+':tvec']
+
         self.cs2d['coords'] = params['%s:coords' % self.name][:, :2]
         self.cs2d['matprops'] = params['matprops']
         self.cs2d['failmat'] = params['failmat']
         self.cs2d['DPs'] = params['%s:DPs' % self.name]
+        counter = 0
+        nvar = len(self._varnames)
         for ireg, reg in enumerate(self.cs2d['regions']):
             Ts = []
             As = []
             layers = []
             for i, lname in enumerate(reg['layers']):
                 varname = '%s:r%02d%s' % (self.name, ireg, lname)
-                if params[varname + 'T'] > 0.:
-                    Ts.append(params[varname + 'T'])
-                    As.append(params[varname + 'A'])
+                if tvec[counter] > 0.:
+                    Ts.append(tvec[counter])
+                    As.append(tvec[nvar+counter])
                     layers.append(lname)
+                counter += 1
             self.cs2d['regions'][ireg]['thicknesses'] = np.asarray(Ts)
             self.cs2d['regions'][ireg]['angles'] = np.asarray(As)
             self.cs2d['regions'][ireg]['layers'] = layers
@@ -156,10 +160,11 @@ class BECASCSStructure(Component):
             layers = []
             for i, lname in enumerate(reg['layers']):
                 varname = '%s:w%02d%s' % (self.name, ireg, lname)
-                if params[varname + 'T'] > 0.:
-                    Ts.append(params[varname + 'T'])
-                    As.append(params[varname + 'A'])
+                if tvec[counter] > 0.:
+                    Ts.append(tvec[counter])
+                    As.append(tvec[nvar+counter])
                     layers.append(lname)
+                counter += 1
             self.cs2d['webs'][ireg]['thicknesses'] = np.asarray(Ts)
             self.cs2d['webs'][ireg]['angles'] = np.asarray(As)
             self.cs2d['webs'][ireg]['layers'] = layers
@@ -225,21 +230,40 @@ class Slice(Component):
         for i in range(self.nDP):
             self.add_param('DP%02d' % i, DPs[:, i])
 
-
         self.add_param('blade_surface_st', np.zeros(sdim))
+
+        vsize = 0
+        self._varnames = []
+        for ireg, reg in enumerate(st3d['regions']):
+            for i, lname in enumerate(reg['layers']):
+                varname = 'r%02d%s' % (ireg, lname)
+                self.add_param(varname + 'T', np.zeros(self.nsec))
+                self.add_param(varname + 'A', np.zeros(self.nsec))
+                self._varnames.append(varname)
+        for ireg, reg in enumerate(st3d['webs']):
+            for i, lname in enumerate(reg['layers']):
+                varname = 'w%02d%s' % (ireg, lname)
+                self.add_param(varname + 'T', np.zeros(self.nsec))
+                self.add_param(varname + 'A', np.zeros(self.nsec))
+                self._varnames.append(varname)
 
         for i in range(self.nsec):
             self.add_output('sec%03d:DPs' % i, DPs[i, :])
             self.add_output('sec%03d:coords' % i, np.zeros((sdim[0], sdim[2])))
+            self.add_output('sec%03d:tvec' % i, np.zeros(len(self._varnames)*2))
 
     def solve_nonlinear(self, params, unknowns, resids):
 
+        nvar = len(self._varnames)
         for i in range(self.nsec):
             DPs = np.zeros(self.nDP)
             for j in range(self.nDP):
                 DPs[j] = params['DP%02d' % j][i]
             unknowns['sec%03d:DPs' % i] = DPs
             unknowns['sec%03d:coords' % i] = params['blade_surface_st'][:, i, :]
+            for ii, name in enumerate(self._varnames):
+                unknowns['sec%03d:tvec' % i][ii] = params[name + 'T'][i]
+                unknowns['sec%03d:tvec' % i][nvar+ii] = params[name + 'A'][i]
 
 
 class PostprocessCS(Component):
@@ -438,12 +462,6 @@ class BECASBeamStructure(Group):
             secname = 'sec%03d' % i
             par.add(secname, BECASCSStructure(secname, config, st3d,
                                               st3d['s'][i], sdim[0], cs_size), promotes=['*'])
-
-            # passing the parent group down is not nice,
-            # but makes things a lot cleaner
-            for name in self._varnames:
-                group.connect(name + 'T', '%s:%sT' % (secname, name), src_indices=([i]))
-                group.connect(name + 'A', '%s:%sA' % (secname, name), src_indices=([i]))
 
         promotions = ['hub_radius',
                       'blade_length',
