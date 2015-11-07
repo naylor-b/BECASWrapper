@@ -33,7 +33,7 @@ from fusedwind.turbine.geometry import read_blade_planform,\
                                        PGLRedistributedPlanform
 
 
-def configure(nsec, dry_run=False, FPM=False, with_sr=False):
+def configure(nsec_st, dry_run=False, FPM=False, with_sr=False):
 
     p = Problem(impl=impl, root=Group())
 
@@ -41,7 +41,6 @@ def configure(nsec, dry_run=False, FPM=False, with_sr=False):
 
     pf = read_blade_planform('data/DTU_10MW_RWT_blade_axis_prebend.dat')
     nsec_ae = 50
-    nsec_st = 8
     s_ae = np.linspace(0, 1, nsec_ae)
     s_st = np.linspace(0, 1, nsec_st)
     pf = redistribute_planform(pf, s=s_ae)
@@ -148,10 +147,12 @@ if __name__ == "__main__":
 
     # unittest.main()
     t0 = time.time()
-    p = configure(8, True, False)
+    # numer of components in ParallelGroup
+    nsec_st = 80
+    p = configure(nsec_st, True, False)
     t1 = time.time()
     p.run()
     t2 = time.time()
     print 'setup: ', t1 - t0
-    print 'run: ', t2 - t0
+    print 'run: ', t2 - t1
     # print('mass %f'%p['blade_mass'])
