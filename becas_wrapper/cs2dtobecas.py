@@ -83,6 +83,9 @@ class CS2DtoBECAS(object):
     def compute(self, redistribute_flag=True):
         """  """
 
+        if self.dry_run:
+            print('CS2DtoBECAS running in dry-run mode')
+            return
         tt = time.time()
 
         self.redistribute_flag = redistribute_flag
@@ -112,7 +115,7 @@ class CS2DtoBECAS(object):
         self.create_elements_3d(reverse_normals=False)
         self.write_abaqus_inp()
         self.write_becas_inp()
-
+        print 'CS2DtoBECAS time:', time.time() - tt
 
     def compute_max_layers(self):
         """
