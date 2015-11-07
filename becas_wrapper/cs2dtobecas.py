@@ -2,7 +2,6 @@
 import os
 import time
 import numpy as np
-import logging
 from string import digits
 
 from PGL.components.airfoil import AirfoilShape
@@ -163,7 +162,10 @@ class CS2DtoBECAS(object):
         # convert DPs to s01 notation
         self.DPs01 = [af.s_to_01(s) for s in self.cs2d['DPs']]
         self.DPcoords = [af.interp_s(s) for s in self.DPs01]
-
+        self.DPs01s = self.DPs01
+        if True in (np.diff(np.asarray(self.DPs01)) < 0.):
+            print 'Sorting DPs!',self.cs2d['s'], self.DPs01
+            self.DPs01.sort()
         # full redistribution of nodes
         if self.redistribute_flag:
             dist_ni = 0
