@@ -88,23 +88,23 @@ class BECASCSStructure(Component):
         self._varnames = []
         self.add_param('%s:coords' % name, np.zeros((ni_chord, 3)))
 
-        self.cs2d = {}
-        self.cs2d['materials'] = st3d['materials']
-        self.cs2d['matprops'] = st3d['matprops']
-        self.cs2d['failcrit'] = st3d['failcrit']
-        self.cs2d['failmat'] = st3d['failmat']
-        self.cs2d['web_def'] = st3d['web_def']
-        self.cs2d['s'] = s
-        self.cs2d['DPs'] = np.zeros(self.nr + 1)
-        self.cs2d['regions'] = []
-        self.cs2d['webs'] = []
+        self.cs2di = {}
+        self.cs2di['materials'] = st3d['materials']
+        self.cs2di['matprops'] = st3d['matprops']
+        self.cs2di['failcrit'] = st3d['failcrit']
+        self.cs2di['failmat'] = st3d['failmat']
+        self.cs2di['web_def'] = st3d['web_def']
+        self.cs2di['s'] = s
+        self.cs2di['DPs'] = np.zeros(self.nr + 1)
+        self.cs2di['regions'] = []
+        self.cs2di['webs'] = []
         for ireg, reg in enumerate(st3d['regions']):
             r = {}
             r['layers'] = reg['layers']
             nl = len(reg['layers'])
             r['thicknesses'] = np.zeros(nl)
             r['angles'] = np.zeros(nl)
-            self.cs2d['regions'].append(r)
+            self.cs2di['regions'].append(r)
             for i, lname in enumerate(reg['layers']):
                 varname = '%s:r%02d%s' % (name, ireg, lname)
                 self._varnames.append(varname)
@@ -114,7 +114,7 @@ class BECASCSStructure(Component):
             nl = len(reg['layers'])
             r['thicknesses'] = np.zeros(nl)
             r['angles'] = np.zeros(nl)
-            self.cs2d['webs'].append(r)
+            self.cs2di['webs'].append(r)
             for i, lname in enumerate(reg['layers']):
                 varname = '%s:w%02d%s' % (name, ireg, lname)
                 self._varnames.append(varname)
@@ -123,29 +123,38 @@ class BECASCSStructure(Component):
         # add outputs
         self.add_output('%s:cs_props' % name, np.zeros(cs_size))
 
-        self.mesher = CS2DtoBECAS(self.cs2d, **config['CS2DtoBECAS'])
-        self.becas = BECASWrapper(self.cs2d['s'], **config['BECASWrapper'])
+        self.mesher = CS2DtoBECAS(self.cs2di, **config['CS2DtoBECAS'])
+        self.becas = BECASWrapper(self.cs2di['s'], **config['BECASWrapper'])
 
     def _params2dict(self, params):
         """
         convert the OpenMDAO params dictionary into
         the dictionary format used in CS2DtoBECAS.
         """
-
         tvec = params[self.name+':tvec']
 
+        self.cs2d = {}
+        # constants
+        self.cs2d['s'] = self.cs2di['s']
+        self.cs2d['web_def'] = self.cs2di['web_def']
+        self.cs2d['failcrit'] = self.cs2di['failcrit']
+        self.cs2d['materials'] = self.cs2di['materials']
+
+        # params
         self.cs2d['coords'] = params['%s:coords' % self.name][:, :2]
         self.cs2d['matprops'] = params['matprops']
         self.cs2d['failmat'] = params['failmat']
         self.cs2d['DPs'] = params['%s:DPs' % self.name]
+        self.cs2d['regions'] = []
+        self.cs2d['webs'] = []
         counter = 0
         nvar = len(self._varnames)
-        for ireg, reg in enumerate(self.cs2d['regions']):
+        for ireg, reg in enumerate(self.cs2di['regions']):
+            self.cs2d['regions'].append({})
             Ts = []
             As = []
             layers = []
             for i, lname in enumerate(reg['layers']):
-                varname = '%s:r%02d%s' % (self.name, ireg, lname)
                 if tvec[counter] > 0.:
                     Ts.append(tvec[counter])
                     As.append(tvec[nvar+counter])
@@ -154,12 +163,12 @@ class BECASCSStructure(Component):
             self.cs2d['regions'][ireg]['thicknesses'] = np.asarray(Ts)
             self.cs2d['regions'][ireg]['angles'] = np.asarray(As)
             self.cs2d['regions'][ireg]['layers'] = layers
-        for ireg, reg in enumerate(self.cs2d['webs']):
+        for ireg, reg in enumerate(self.cs2di['webs']):
+            self.cs2d['webs'].append({})
             Ts = []
             As = []
             layers = []
             for i, lname in enumerate(reg['layers']):
-                varname = '%s:w%02d%s' % (self.name, ireg, lname)
                 if tvec[counter] > 0.:
                     Ts.append(tvec[counter])
                     As.append(tvec[nvar+counter])
@@ -174,7 +183,7 @@ class BECASCSStructure(Component):
         calls CS2DtoBECAS/shellexpander to generate mesh
         and BECAS to compute the cs_props
         """
-        workdir = 'becas_sec%3.3f_%i' % (self.cs2d['s'], self.__hash__())
+        workdir = 'becas_sec%3.3f_%i' % (self.cs2di['s'], self.__hash__())
 
         try:
             os.mkdir(workdir)
