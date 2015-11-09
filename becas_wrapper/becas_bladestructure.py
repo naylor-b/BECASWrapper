@@ -345,6 +345,9 @@ class PostprocessCS(Component):
         z = params['z_st'] * params['blade_length']
         hub_radius = params['hub_radius']
         s = calculate_length(np.array([x, y, z]).T)
+
+        unknowns['blade_beam_structure'][:, 0] = s
+
         dm = unknowns['blade_beam_structure'][:, 1]
         g = 9.81
 
