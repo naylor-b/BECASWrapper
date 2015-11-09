@@ -317,18 +317,28 @@ class PostprocessCS(Component):
         self.nsec = nsec
 
         for i in range(nsec):
-            self.add_param('cs_props%03d' % i, np.zeros(cs_size), desc='cross-sectional props for sec%03d' % i)
+            self.add_param('cs_props%03d' % i, np.zeros(cs_size),
+                desc='cross-sectional props for sec%03d' % i)
         self.add_param('hub_radius', 0., units='m', desc='Hub length')
         self.add_param('blade_length', 0., units='m', desc='Blade length')
 
-        self.add_param('x_st', np.zeros(nsec), units='m', desc='dimensionalised x-coordinate of blade axis')
-        self.add_param('y_st', np.zeros(nsec), units='m', desc='dimensionalised y-coordinate of blade axis')
-        self.add_param('z_st', np.zeros(nsec), units='m', desc='dimensionalised y-coordinate of blade axis')
+        self.add_param('x_st', np.zeros(nsec), units='m',
+            desc='non-dimensionalised x-coordinate of blade axis in structural grid')
+        self.add_param('y_st', np.zeros(nsec), units='m',
+            desc='non-dimensionalised y-coordinate of blade axis in structural grid')
+        self.add_param('z_st', np.zeros(nsec), units='m',
+            desc='non-dimensionalised y-coordinate of blade axis in structural grid')
+        self.add_param('chord_st', np.zeros(nsec), units='m',
+            desc='blade chord distribution in structural grid')
+        self.add_param('p_le_st', np.zeros(nsec), units='m',
+            desc='blade pitch axis aft leading edge in structural grid')
 
 
-        self.add_output('blade_beam_structure', np.zeros((nsec, cs_size)), desc='Beam properties of the blade')
+        self.add_output('blade_beam_structure', np.zeros((nsec, cs_size)),
+            desc='Beam properties of the blade')
         self.add_output('blade_mass', 0., units='kg', desc='Blade mass')
-        self.add_output('blade_mass_moment', 0., units='N*m', desc='Blade mass moment')
+        self.add_output('blade_mass_moment', 0., units='N*m',
+            desc='Blade mass moment')
 
     def solve_nonlinear(self, params, unknowns, resids):
         """
@@ -339,12 +349,20 @@ class PostprocessCS(Component):
             cs = params[cname]
             unknowns['blade_beam_structure'][i, :] = cs
 
+        # offset chordwise position of x_cg, x_sh, and to half chord
+        unknowns['blade_beam_structure'][:, 2]  += (0.5 - params['p_le_st']) * params['chord_st'] * params['blade_length']
+        unknowns['blade_beam_structure'][:, 6]  += (0.5 - params['p_le_st']) * params['chord_st'] * params['blade_length']
+        unknowns['blade_beam_structure'][:, 17] += (0.5 - params['p_le_st']) * params['chord_st'] * params['blade_length']
+
         # compute mass and mass moment
         x = params['x_st'] * params['blade_length']
         y = params['y_st'] * params['blade_length']
         z = params['z_st'] * params['blade_length']
         hub_radius = params['hub_radius']
         s = calculate_length(np.array([x, y, z]).T)
+
+        unknowns['blade_beam_structure'][:, 0] = s
+
         dm = unknowns['blade_beam_structure'][:, 1]
         g = 9.81
 
@@ -477,6 +495,8 @@ class BECASBeamStructure(Group):
                       'x_st',
                       'y_st',
                       'z_st',
+                      'chord_st',
+                      'p_le_st',
                       'blade_beam_structure',
                       'blade_mass',
                       'blade_mass_moment']
