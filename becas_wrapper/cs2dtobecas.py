@@ -4,7 +4,11 @@ import time
 import numpy as np
 from string import digits
 
-from PGL.components.airfoil import AirfoilShape
+try:
+    from PGL.components.airfoil import AirfoilShape
+    _PGL_installed = True
+except:
+    _PGL_installed = False
 
 
 class CS2DtoBECAS(object):
@@ -82,7 +86,7 @@ class CS2DtoBECAS(object):
     def compute(self, redistribute_flag=True):
         """  """
 
-        if self.dry_run:
+        if not _PGL_installed:
             print('CS2DtoBECAS running in dry-run mode')
             return
         tt = time.time()

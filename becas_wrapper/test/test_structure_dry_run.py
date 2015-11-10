@@ -39,11 +39,15 @@ def configure(nsec_st, dry_run=False, FPM=False, with_sr=False):
 
     p.root.add('blade_length_c', IndepVarComp('blade_length', 86.366), promotes=['*'])
 
-    pf = read_blade_planform('data/DTU_10MW_RWT_blade_axis_prebend.dat')
+    pfo = read_blade_planform('data/DTU_10MW_RWT_blade_axis_prebend.dat')
     nsec_ae = 50
     s_ae = np.linspace(0, 1, nsec_ae)
     s_st = np.linspace(0, 1, nsec_st)
-    pf = redistribute_planform(pf, s=s_ae)
+    pf = {}
+    pf['s'] = s_ae
+    for k, v in pfo.iteritems():
+        if k in ['s', 'smax', 'blade_length']: continue
+        pf[k] = np.interp(s_ae, pfo['s'], v)
 
     spl = p.root.add('pf_splines', SplinedBladePlanform(pf), promotes=['*'])
     spl.configure()
@@ -70,12 +74,12 @@ def configure(nsec_st, dry_run=False, FPM=False, with_sr=False):
     st3dn = interpolate_bladestructure(st3d, s_st)
 
     spl = p.root.add('st_splines', SplinedBladeStructure(st3dn), promotes=['*'])
-    spl.add_spline('DP04', np.linspace(0, 1, 4), spline_type='bezier')
-    spl.add_spline('DP05', np.linspace(0, 1, 4), spline_type='bezier')
-    spl.add_spline('DP08', np.linspace(0, 1, 4), spline_type='bezier')
-    spl.add_spline('DP09', np.linspace(0, 1, 4), spline_type='bezier')
-    spl.add_spline('r04uniaxT', np.linspace(0, 1, 4), spline_type='bezier')
-    spl.add_spline('r08uniaxT', np.linspace(0, 1, 4), spline_type='bezier')
+    spl.add_spline('DP04', np.linspace(0, 1, 4), spline_type='pchip')
+    spl.add_spline('DP05', np.linspace(0, 1, 4), spline_type='pchip')
+    spl.add_spline('DP08', np.linspace(0, 1, 4), spline_type='pchip')
+    spl.add_spline('DP09', np.linspace(0, 1, 4), spline_type='pchip')
+    spl.add_spline('r04uniaxT', np.linspace(0, 1, 4), spline_type='pchip')
+    spl.add_spline('r08uniaxT', np.linspace(0, 1, 4), spline_type='pchip')
     spl.configure()
     # inputs to CS2DtoBECAS and BECASWrapper
     config = {}
