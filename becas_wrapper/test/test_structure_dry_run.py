@@ -148,7 +148,7 @@ if __name__ == "__main__":
     # unittest.main()
     t0 = time.time()
     # numer of components in ParallelGroup
-    nsec_st = 80
+    nsec_st = 4
     p = configure(nsec_st, True, False)
     t1 = time.time()
     p.run()
